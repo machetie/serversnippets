@@ -1,0 +1,65 @@
+#!/bin/bash
+# Change paths for mount and log file & create mountchek file.
+# Add script to crontb by typig crontb -e and pasting the line bellow (without # in front )
+# * * * * *  /home/user/scripts/rclone_restart.cron >/dev/null 2>&1
+# Make script executable with: chmod a+x /home/user/scripts/rclone_restart.cron
+
+logfile="/home/user/logs/rclone_restart.cron.log"
+
+if pidof -o %PPID -x "rclone_restart.cron"; then
+   echo "$(date "+%d.%m.%Y %T") EXIT: rclone_restart.cron already running."
+   exit 1
+fi
+
+if [[ -f "/home/user/mnt/gdrive-crypt/mountcheck" ]]; then
+   echo "$(date "+%d.%m.%Y %T") INFO: Check successful,gdrive-crypt mounted." | tee -a "$logfile"
+   if pgrep -x mergerfs > /dev/null
+    then
+        echo "mergerfs is running"
+    else
+        echo "starting mergerfs"
+	     fusermount -uz /home/user/mnt/media_merge/ | tee -a "$logfile"
+        mergerfs /home/user/media_tmp:/home/user/mnt/gdrive-crypt /home/user/mnt/media_merge -o rw,use_ino,func.getattr=newest,category.action=all,category.create=ff,cache.files=partial,dropcacheonclose=true | tee -a "$logfile"
+    fi
+   exit
+else
+   echo "$(date "+%d.%m.%Y %T") ERROR: Drive not mounted, remount in progress." | tee -a "$logfile"
+   # Unmount before remounting
+   fusermount -uz /home/user/mnt/gdrive-crypt/ | tee -a "$logfile"
+   #creat screen rclone and start rclone
+   screen -dmS rclone /usr/bin/rclone mount -vv \
+   --config=/home/user/.config/rclone/rclone.conf \
+   --user-agent=userdrive \
+   --buffer-size 256M \
+   --dir-cache-time 5000h \
+   --attr-timeout 5000h \
+   --cache-dir=/home/user/mnt/rclone/cache \
+   --drive-pacer-min-sleep 10ms \
+   --drive-pacer-burst 200 \
+   --drive-chunk-size 128M \
+   --poll-interval=15s \
+   --timeout 1h \
+   --vfs-cache-mode=full \
+   --vfs-cache-max-size=750G \
+   --vfs-cache-max-age=5000h \
+   --vfs-cache-poll-interval 5m \
+   --bwlimit-file 32M \
+   --umask=002 \
+   --gid=1291 \
+   --uid=1290 gdrive-crypt: /home/user/mnt/gdrive-crypt/ | tee -a "$logfile"
+   # wait for mount to finish
+   sleep 60
+fi
+   if [[ -f "/home/user/mnt/gdrive-crypt/mountcheck" ]]; then
+      echo "$(date "+%d.%m.%Y %T") INFO: Remount successful." | tee -a "$logfile"
+      if pgrep -x mergerfs > /dev/null; then
+        echo "mergerfs is running"
+      else
+        echo "starting mergerfs"
+	fusermount -uz /home/user/mnt/media_merge/ | tee -a "$logfile"
+        mergerfs /home/user/media_tmp:/home/user/mnt/gdrive-crypt /home/user/mnt/media_merge -o rw,use_ino,func.getattr=newest,category.action=all,category.create=ff,cache.files=partial,dropcacheonclose=true | tee -a "$logfile"
+      fi
+   else
+      echo "$(date "+%d.%m.%Y %T") CRITICAL: Remount failed." | tee -a "$logfile"
+   fi
+exit
